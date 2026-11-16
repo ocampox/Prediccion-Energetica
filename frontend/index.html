@@ -1,63 +1,290 @@
 <!doctype html>
 <html lang="es">
 <head>
-<meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Pronóstico</title>
-<!--
-  ESQUELETO DEL FRONTEND
-  ======================
-  Esta página ya funciona: pide el pronóstico a la API y lo muestra en una
-  tabla sin formato. Tu trabajo es convertirla en una interfaz de verdad.
-
-  Requisitos mínimos (ver README, Fase 2):
-    1. Una gráfica con el histórico, el pronóstico y el intervalo de confianza.
-    2. Las horas en hora de Colombia (la API las entrega en UTC, con "Z").
-    3. Al menos un indicador destacado (p.ej. valor de la próxima hora,
-       máximo esperado, hora del último dato).
-    4. Controles para elegir cuántas horas pronosticar.
-    5. Un mensaje claro cuando la API responde con error.
-
-  Puedes usar cualquier librería de gráficas cargada desde un CDN
-  (Chart.js, Plotly, ECharts...) y poner archivos .css o .js en esta misma
-  carpeta: se sirven en /static/<nombre>.
-
-  Endpoints disponibles (pruébalos en /docs):
-    GET /api/prediccion?horas=12&historia=48&confianza=0.95
-    GET /api/historico?horas=48
-    GET /api/modelo
-    GET /api/salud
--->
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Modelo energético</title>
+    <!-- Tailwind CSS -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    <!-- Apache ECharts -->
+    <script src="https://cdn.jsdelivr.net/npm/echarts@5.5.0/dist/echarts.min.js"></script>
+    <!-- Phosphor Icons -->
+    <script src="https://unpkg.com/@phosphor-icons/web"></script>
+    <!-- Google Fonts -->
+    <link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@300;400;600;700&display=swap" rel="stylesheet">
+    
+    <style>
+        body { font-family: 'Space Grotesk', sans-serif; }
+        ::-webkit-scrollbar { width: 8px; height: 8px; }
+        ::-webkit-scrollbar-track { background: rgba(255, 255, 255, 0.05); }
+        ::-webkit-scrollbar-thumb { background: rgba(255, 255, 255, 0.2); border-radius: 4px; }
+        ::-webkit-scrollbar-thumb:hover { background: rgba(0, 240, 255, 0.5); }
+    </style>
 </head>
-<body>
-  <h1>Pronóstico</h1>
-  <p id="estado">Consultando la API…</p>
-  <table border="1" cellpadding="4">
-    <thead><tr><th>tiempo (UTC)</th><th>prediccion</th><th>limite_inferior</th><th>limite_superior</th></tr></thead>
-    <tbody id="filas"></tbody>
-  </table>
+<body class="bg-slate-950 text-slate-200 min-h-screen relative overflow-x-hidden selection:bg-cyan-500/30">
+    
+    <!-- Fondo animado sutil -->
+    <div class="fixed inset-0 z-[-1]">
+        <div class="absolute top-[-10%] left-[-10%] w-[50%] h-[50%] bg-cyan-600/20 blur-[120px] rounded-full mix-blend-screen"></div>
+        <div class="absolute bottom-[-10%] right-[-10%] w-[50%] h-[50%] bg-fuchsia-600/20 blur-[120px] rounded-full mix-blend-screen"></div>
+    </div>
+
+    <div class="max-w-7xl mx-auto p-4 sm:p-6 lg:p-8">
+        
+        <!-- Encabezado Glassmorphism -->
+        <header class="bg-white/5 backdrop-blur-xl border border-white/10 rounded-2xl p-6 mb-8 flex flex-col md:flex-row justify-between items-center gap-6 shadow-2xl">
+            <div>
+                <h1 class="text-3xl font-bold flex items-center gap-3">
+                    <div class="p-2 bg-gradient-to-br from-cyan-400 to-blue-600 rounded-lg shadow-[0_0_15px_rgba(34,211,238,0.4)]">
+                        <i class="ph ph-waveform text-white"></i>
+                    </div>
+                    <span class="bg-clip-text text-transparent bg-gradient-to-r from-white to-slate-400">
+                        Modelo energético
+                    </span>
+                </h1>
+                <p class="text-slate-400 mt-2 text-sm">Predicción en tiempo real con intervalos de confianza</p>
+            </div>
+            
+            <div class="flex items-center gap-4 bg-black/40 p-2.5 rounded-xl border border-white/5">
+                <label for="inputHoras" class="text-sm font-medium text-slate-300 ml-2">Horizonte (h):</label>
+                <input type="number" id="inputHoras" value="12" min="1" max="72" 
+                       class="w-20 bg-white/5 border border-white/10 rounded-lg px-3 py-1.5 text-white focus:outline-none focus:border-cyan-400 transition-colors">
+                <button onclick="cargar()" class="relative group overflow-hidden rounded-lg p-[1px]">
+                    <span class="absolute inset-0 bg-gradient-to-r from-cyan-500 to-blue-600 rounded-lg opacity-70 group-hover:opacity-100 transition-opacity duration-300"></span>
+                    <div class="relative bg-slate-950 px-5 py-1.5 rounded-lg flex items-center gap-2 group-hover:bg-opacity-0 transition-all duration-300">
+                        <i class="ph ph-arrows-clockwise text-cyan-400 group-hover:text-white"></i>
+                        <span class="font-semibold text-sm group-hover:text-white">Sincronizar</span>
+                    </div>
+                </button>
+            </div>
+        </header>
+
+        <!-- Mensaje de Error Neon -->
+        <div id="alertaError" class="hidden mb-6 bg-red-950/50 border border-red-500/50 p-4 rounded-xl backdrop-blur-md shadow-[0_0_20px_rgba(239,68,68,0.2)]">
+            <div class="flex items-center">
+                <div class="p-2 bg-red-500/20 rounded-full mr-4">
+                    <i class="ph ph-warning text-red-400 text-xl animate-pulse"></i>
+                </div>
+                <p id="mensajeError" class="text-red-200 font-medium"></p>
+            </div>
+        </div>
+
+        <div id="contenidoPrincipal" class="transition-opacity duration-500">
+            <!-- KPIs -->
+            <div class="grid grid-cols-1 md:grid-cols-3 gap-6 mb-8">
+                <!-- KPI 1 -->
+                <div class="bg-white/5 backdrop-blur-lg border border-white/10 rounded-2xl p-6 relative overflow-hidden group">
+                    <div class="absolute top-0 right-0 p-4 opacity-10 group-hover:opacity-20 transition-opacity"><i class="ph ph-clock text-6xl"></i></div>
+                    <h3 class="text-xs font-semibold text-slate-400 uppercase tracking-widest">Último Dato Recibido</h3>
+                    <p id="kpiUltimaObs" class="text-xl font-bold text-white mt-3">--</p>
+                    <div class="absolute bottom-0 left-0 h-1 w-full bg-gradient-to-r from-slate-600 to-slate-400 opacity-50"></div>
+                </div>
+                
+                <!-- KPI 2 -->
+                <div class="bg-white/5 backdrop-blur-lg border border-white/10 rounded-2xl p-6 relative overflow-hidden group">
+                    <div class="absolute top-0 right-0 p-4 opacity-10 group-hover:opacity-20 transition-opacity"><i class="ph ph-target text-6xl text-cyan-400"></i></div>
+                    <h3 class="text-xs font-semibold text-cyan-400 uppercase tracking-widest">Predicción Próxima Hora</h3>
+                    <p class="text-4xl font-bold text-white mt-2 flex items-baseline gap-2">
+                        <span id="kpiProximaHora">--</span>
+                    </p>
+                    <div class="absolute bottom-0 left-0 h-1 w-full bg-gradient-to-r from-cyan-600 to-blue-500 shadow-[0_0_10px_rgba(6,182,212,0.5)]"></div>
+                </div>
+                
+                <!-- KPI 3 -->
+                <div class="bg-white/5 backdrop-blur-lg border border-white/10 rounded-2xl p-6 relative overflow-hidden group">
+                    <div class="absolute top-0 right-0 p-4 opacity-10 group-hover:opacity-20 transition-opacity"><i class="ph ph-trend-up text-6xl text-fuchsia-400"></i></div>
+                    <h3 class="text-xs font-semibold text-fuchsia-400 uppercase tracking-widest">Pico Máximo Esperado</h3>
+                    <p class="text-4xl font-bold text-white mt-2">
+                        <span id="kpiMaximo">--</span>
+                    </p>
+                    <div class="absolute bottom-0 left-0 h-1 w-full bg-gradient-to-r from-fuchsia-600 to-purple-500 shadow-[0_0_10px_rgba(192,38,211,0.5)]"></div>
+                </div>
+            </div>
+
+            <!-- Gráfica ECharts -->
+            <div class="bg-white/5 backdrop-blur-xl border border-white/10 rounded-2xl p-2 sm:p-6 mb-8 shadow-2xl relative">
+                <div id="estadoCarga" class="absolute inset-0 bg-slate-950/60 backdrop-blur-sm rounded-2xl flex flex-col justify-center items-center z-10 hidden">
+                    <div class="w-12 h-12 border-4 border-cyan-500/30 border-t-cyan-400 rounded-full animate-spin shadow-[0_0_15px_rgba(34,211,238,0.5)]"></div>
+                    <span class="mt-4 text-cyan-400 font-medium tracking-widest text-sm animate-pulse">PROCESANDO TENSORES...</span>
+                </div>
+                <div id="grafica" class="w-full h-[450px]"></div>
+            </div>
+
+            <!-- Tabla -->
+            <div class="bg-white/5 backdrop-blur-xl border border-white/10 rounded-2xl overflow-hidden shadow-2xl">
+                <div class="p-5 border-b border-white/10 bg-black/20 flex items-center justify-between">
+                    <h2 class="text-lg font-bold text-white flex items-center gap-2">
+                        <i class="ph ph-table text-cyan-400"></i> Matriz de Datos (Hora Colombia)
+                    </h2>
+                </div>
+                <div class="overflow-x-auto">
+                    <table class="w-full text-left text-sm whitespace-nowrap">
+                        <thead class="bg-black/40 text-slate-300 text-xs uppercase tracking-wider font-semibold">
+                            <tr>
+                                <th class="px-6 py-4">Marca de Tiempo</th>
+                                <th class="px-6 py-4 text-right">Predicción</th>
+                                <th class="px-6 py-4 text-right">Lím. Inferior</th>
+                                <th class="px-6 py-4 text-right">Lím. Superior</th>
+                            </tr>
+                        </thead>
+                        <tbody id="filas" class="divide-y divide-white/5 text-slate-300">
+                            <!-- JS inyecta filas aquí -->
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+        </div>
+    </div>
 
 <script>
-async function cargar() {
-  const estado = document.getElementById("estado");
-  try {
-    const respuesta = await fetch("/api/prediccion?horas=12&historia=48");
-    const datos = await respuesta.json();
-    if (!respuesta.ok) throw new Error(datos.detail);
+let miGrafica = null;
 
-    // datos.historico  -> [{tiempo, valor}, ...]            (horas pasadas)
-    // datos.prediccion -> [{tiempo, prediccion, limite_inferior, limite_superior}, ...]
-    console.log(datos);   // abre la consola del navegador (F12) para explorarlo
-
-    document.getElementById("filas").innerHTML = datos.prediccion.map(p =>
-      `<tr><td>${p.tiempo}</td><td>${p.prediccion}</td><td>${p.limite_inferior}</td><td>${p.limite_superior}</td></tr>`
-    ).join("");
-    estado.textContent = `Último dato real: ${datos.ultima_observacion}`;
-  } catch (error) {
-    estado.textContent = "Error: " + error.message;
-  }
+function formatearFechaCO(fechaUTC) {
+    return new Date(fechaUTC).toLocaleString('es-CO', {
+        timeZone: 'America/Bogota',
+        day: '2-digit', month: 'short', hour: '2-digit', minute: '2-digit', hour12: true
+    });
 }
-cargar();
+
+function obtenerTimestampCO(fechaUTC) {
+    const d = new Date(fechaUTC);
+    const strCO = d.toLocaleString('en-US', { timeZone: 'America/Bogota' });
+    return new Date(strCO).getTime();
+}
+
+async function cargar() {
+    const estadoCarga = document.getElementById("estadoCarga");
+    const alertaError = document.getElementById("alertaError");
+    
+    estadoCarga.classList.remove("hidden");
+    alertaError.classList.add("hidden");
+
+    try {
+        const horas = document.getElementById("inputHoras").value || 12;
+        const respuesta = await fetch(`/api/prediccion?horas=${horas}&historia=48`);
+        const datos = await respuesta.json();
+        
+        if (!respuesta.ok) throw new Error(datos.detail || "Error anómalo en la red neuronal");
+
+        document.getElementById("kpiUltimaObs").textContent = formatearFechaCO(datos.ultima_observacion);
+        if (datos.prediccion && datos.prediccion.length > 0) {
+            document.getElementById("kpiProximaHora").textContent = parseFloat(datos.prediccion[0].prediccion).toFixed(2);
+            const maximo = Math.max(...datos.prediccion.map(p => parseFloat(p.prediccion)));
+            document.getElementById("kpiMaximo").textContent = maximo.toFixed(2);
+        }
+
+        document.getElementById("filas").innerHTML = datos.prediccion.map((p, index) => `
+            <tr class="hover:bg-white/5 transition-colors ${index === 0 ? 'bg-cyan-900/20' : ''}">
+                <td class="px-6 py-4 font-mono text-cyan-100">${formatearFechaCO(p.tiempo)}</td>
+                <td class="px-6 py-4 text-right font-bold text-cyan-400">${parseFloat(p.prediccion).toFixed(2)}</td>
+                <td class="px-6 py-4 text-right text-slate-500">${parseFloat(p.limite_inferior).toFixed(2)}</td>
+                <td class="px-6 py-4 text-right text-slate-500">${parseFloat(p.limite_superior).toFixed(2)}</td>
+            </tr>
+        `).join("");
+
+        const histData = datos.historico.map(d => [obtenerTimestampCO(d.tiempo), parseFloat(d.valor)]);
+        const predLine = datos.prediccion.map(d => [obtenerTimestampCO(d.tiempo), parseFloat(d.prediccion)]);
+        const predBase = datos.prediccion.map(d => [obtenerTimestampCO(d.tiempo), parseFloat(d.limite_inferior)]);
+        const predBand = datos.prediccion.map(d => [obtenerTimestampCO(d.tiempo), parseFloat(d.limite_superior) - parseFloat(d.limite_inferior)]);
+
+        renderizarGrafica(histData, predLine, predBase, predBand);
+
+    } catch (error) {
+        document.getElementById("mensajeError").textContent = error.message;
+        alertaError.classList.remove("hidden");
+    } finally {
+        estadoCarga.classList.add("hidden");
+    }
+}
+
+function renderizarGrafica(histData, predLine, predBase, predBand) {
+    if (!miGrafica) {
+        miGrafica = echarts.init(document.getElementById('grafica'));
+        window.addEventListener('resize', () => miGrafica.resize());
+    }
+
+    const opcion = {
+        backgroundColor: 'transparent',
+        tooltip: {
+            trigger: 'axis',
+            backgroundColor: 'rgba(15, 23, 42, 0.9)',
+            borderColor: 'rgba(34, 211, 238, 0.3)',
+            textStyle: { color: '#f1f5f9' },
+            axisPointer: { type: 'cross', label: { backgroundColor: '#0ea5e9' } }
+        },
+        grid: { top: 40, right: 30, bottom: 40, left: 50, containLabel: true },
+        xAxis: {
+            type: 'time',
+            splitLine: { show: true, lineStyle: { color: 'rgba(255, 255, 255, 0.05)' } },
+            axisLabel: { color: '#94a3b8' },
+            axisLine: { lineStyle: { color: 'rgba(255,255,255,0.2)' } }
+        },
+        yAxis: {
+            type: 'value',
+            splitLine: { show: true, lineStyle: { color: 'rgba(255, 255, 255, 0.05)' } },
+            axisLabel: { color: '#94a3b8' }
+        },
+        series: [
+            {
+                name: 'Histórico',
+                type: 'line',
+                data: histData,
+                smooth: true,
+                symbol: 'none',
+                lineStyle: { 
+                    width: 3, 
+                    color: new echarts.graphic.LinearGradient(0, 0, 1, 0, [
+                        { offset: 0, color: '#3b82f6' }, { offset: 1, color: '#06b6d4' }
+                    ]),
+                    shadowColor: 'rgba(6, 182, 212, 0.5)', shadowBlur: 10 
+                }
+            },
+            {
+                name: 'Límite Inferior',
+                type: 'line',
+                data: predBase,
+                stack: 'Confianza',
+                symbol: 'none',
+                lineStyle: { opacity: 0 },
+                tooltip: { show: false }
+            },
+            {
+                name: 'Intervalo (95%)',
+                type: 'line',
+                data: predBand,
+                stack: 'Confianza',
+                symbol: 'none',
+                lineStyle: { opacity: 0 },
+                areaStyle: {
+                    color: new echarts.graphic.LinearGradient(0, 0, 0, 1, [
+                        { offset: 0, color: 'rgba(217, 70, 239, 0.2)' },
+                        { offset: 1, color: 'rgba(6, 182, 212, 0.05)' }
+                    ])
+                }
+            },
+            {
+                name: 'Pronóstico',
+                type: 'line',
+                data: predLine,
+                smooth: true,
+                symbol: 'circle',
+                symbolSize: 6,
+                itemStyle: { color: '#d946ef', borderColor: '#fff', borderWidth: 2 },
+                lineStyle: { 
+                    width: 3, type: 'dashed', color: '#d946ef',
+                    shadowColor: 'rgba(217, 70, 239, 0.5)', shadowBlur: 10
+                }
+            }
+        ]
+    };
+
+    miGrafica.setOption(opcion);
+}
+
+// Asegurar ejecución al cargar el DOM completo
+document.addEventListener("DOMContentLoaded", () => {
+    cargar();
+});
 </script>
 </body>
 </html>
